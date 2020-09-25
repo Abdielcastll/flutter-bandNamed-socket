@@ -1,8 +1,11 @@
 import 'dart:io';
 
+import 'package:band_named/services/socket.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:band_named/models/band_model.dart';
+import 'package:pie_chart/pie_chart.dart';
+import 'package:provider/provider.dart';
 
 class HomePage extends StatefulWidget {
   @override
@@ -10,17 +13,30 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  List<Band> band = [
-    Band(id: '1', name: 'Metallica', votes: 8),
-    Band(id: '2', name: 'Bon Jovi', votes: 6),
-    Band(id: '3', name: 'Rammstein', votes: 10),
-    Band(id: '4', name: 'Maroon 5', votes: 9),
-    Band(id: '5', name: 'Aerosmith', votes: 7),
-    Band(id: '6', name: 'Queen', votes: 10),
-  ];
+  List<Band> bands = [];
+
+  @override
+  void initState() {
+    final socketservice = Provider.of<SocketService>(context, listen: false);
+    socketservice.socket.on('active-bands', (payload) {
+      this.bands = (payload as List).map((band) => Band.formMap(band)).toList();
+      setState(() {});
+    });
+
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    final socketservice = Provider.of<SocketService>(context, listen: false);
+    socketservice.socket.off('active-bands');
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final socketservice = Provider.of<SocketService>(context);
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.white,
@@ -29,10 +45,24 @@ class _HomePageState extends State<HomePage> {
           style: TextStyle(color: Colors.black87),
         ),
         centerTitle: true,
+        actions: [
+          Container(
+              margin: EdgeInsets.only(right: 10.0),
+              child: (socketservice.serverStatus == ServerStatus.Online)
+                  ? Icon(Icons.check_circle, color: Colors.blue[300])
+                  : Icon(Icons.offline_bolt, color: Colors.red[300]))
+        ],
       ),
-      body: ListView.builder(
-        itemCount: band.length,
-        itemBuilder: (context, i) => _bandTile(band[i]),
+      body: Column(
+        children: [
+          _grafica(),
+          Expanded(
+            child: ListView.builder(
+              itemCount: bands.length,
+              itemBuilder: (context, i) => _bandTile(bands[i]),
+            ),
+          ),
+        ],
       ),
       floatingActionButton:
           FloatingActionButton(child: Icon(Icons.add), onPressed: addNewBand),
@@ -88,26 +118,30 @@ class _HomePageState extends State<HomePage> {
 
   void addBandList(String name) {
     if (name.length > 1) {
+      final socketservice = Provider.of<SocketService>(context, listen: false);
       setState(() {
-        this
-            .band
-            .add(Band(id: DateTime.now().toString(), name: name, votes: 0));
+        socketservice.socket.emit('add-band', {'name': name});
       });
     }
     Navigator.pop(context);
   }
 
   Widget _bandTile(Band band) {
+    final _socketService = Provider.of<SocketService>(context, listen: false);
+
     return Dismissible(
       background: Container(
           color: Colors.red[900],
           padding: EdgeInsets.only(left: 10.0),
           child: Align(
             alignment: Alignment.centerLeft,
-            child: Text('Borrando', style: TextStyle(color: Colors.white),),
+            child: Text(
+              'Borrando',
+              style: TextStyle(color: Colors.white),
+            ),
           )),
       onDismissed: (direction) {
-        //TODO: borrar del Backend
+        _socketService.socket.emit('borrar-band', {'id': band.id});
       },
       key: Key(band.id),
       direction: DismissDirection.startToEnd,
@@ -119,8 +153,54 @@ class _HomePageState extends State<HomePage> {
           ),
           title: Text(band.name),
           trailing: Text(band.votes.toString()),
+          onTap: () {
+            setState(() {
+              _socketService.socket.emit('voto-band', {'id': band.id});
+            });
+            _socketService.socket.on('votos', (payload) {
+              print(payload);
+              setState(() {});
+            });
+          },
         ),
       ),
     );
+  }
+
+  Widget _grafica() {
+    Map<String, double> dataMap = new Map();
+      bands.forEach((band) {
+        dataMap.putIfAbsent(band.name, () => band.votes.toDouble());
+      }); 
+      
+    
+    return Container(
+      margin: EdgeInsets.only(top: 30.0),
+      child: PieChart(
+        dataMap: dataMap,
+        animationDuration: Duration(milliseconds: 800),
+        chartLegendSpacing: 32,
+        chartRadius: MediaQuery.of(context).size.width / 3.2,
+        initialAngleInDegree: 0,
+        chartType: ChartType.ring,
+        ringStrokeWidth: 40,
+        centerText: "",
+        legendOptions: LegendOptions(
+          showLegendsInRow: false,
+          legendPosition: LegendPosition.right,
+          showLegends: true,
+          legendTextStyle: TextStyle(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        chartValuesOptions: ChartValuesOptions(
+          showChartValueBackground: false,
+          showChartValues: true,
+          showChartValuesInPercentage: true,
+          showChartValuesOutside: false,
+        ),
+      ),
+    );
+
   }
 }
